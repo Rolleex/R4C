@@ -1,10 +1,10 @@
 import datetime
-from django.http import JsonResponse
-from django.shortcuts import render
+import io
+from openpyxl import Workbook
+from django.db.models import Count
+from django.http import JsonResponse, HttpResponse
 import json
-# Create your views here.
 from django.views.decorators.csrf import csrf_exempt
-
 from .models import Robot
 
 
@@ -55,3 +55,49 @@ def add_robot(request):
 
         else:
             return JsonResponse({'message': 'Неккортектные данные'})
+def make_report():
+    """
+    Функция записи данных из бд в Ексель таблицу
+    Созадем файл, собираем уникальные модели
+    Задаем настройки для последующей фильтрации по времени
+    перебираем каждую модель, создавая для неё отдбельный лист
+    и получаем версию робота и количество в бд
+    убираем лишний лист и передаем книгу дальше
+    """
+    wb = Workbook()
+    queryset = Robot.objects.values('model').distinct()
+    current_day = datetime.datetime.now()
+    start_of_week = current_day - datetime.timedelta(weeks=1)
+
+    for item in queryset:
+        model = item['model']
+        ws = wb.create_sheet(model)
+        headers = ['Модель', 'Версия', 'Количество за неделю']
+        ws.append(headers)
+        version = Robot.objects.filter(model=model, created__range=[start_of_week, current_day]).values(
+            'version').annotate(total_count=Count('version')).distinct()
+
+        for ver in version:
+            row = [model, ver['version'], ver['total_count']]
+            ws.append(row)
+    wb.remove(wb['Sheet'])
+    return wb
+
+
+def report_of_week(request):
+    """ Вызываем функцию make_report
+        создаем байтовый обьект
+        Сохраняем книгу в этот обект
+        помещаем его в начало
+        передаем файл с заголовками
+     """
+    wb = make_report()
+    report = io.BytesIO()
+    wb.save(report)
+    report.seek(0)
+    response = HttpResponse(report, headers={
+        'Content-Type': 'application/vnd.ms-exel',
+        'Content-Disposition': 'attachment; filename="report.xlsx"'
+    })
+
+    return response
