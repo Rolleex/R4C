@@ -3,9 +3,11 @@ import io
 from openpyxl import Workbook
 from django.db.models import Count
 from django.http import JsonResponse, HttpResponse
+from django.core.mail import send_mail
 import json
 from django.views.decorators.csrf import csrf_exempt
 from .models import Robot
+from orders.models import Order
 
 
 @csrf_exempt
@@ -48,6 +50,7 @@ def add_robot(request):
             robot.serial = f'{robot.model}-{robot.version}'
             if not Robot.objects.filter(model=robot.model, version=robot.version).exists():
                 robot.save()
+                check_for_available(robot.serial)  # Вызываем функцию для проверки списка ожидания
                 return JsonResponse({'message': 'Новый дрон создан'}, status=201)
             else:
                 robot.save()
@@ -55,6 +58,8 @@ def add_robot(request):
 
         else:
             return JsonResponse({'message': 'Неккортектные данные'})
+
+
 def make_report():
     """
     Функция записи данных из бд в Ексель таблицу
@@ -101,3 +106,23 @@ def report_of_week(request):
     })
 
     return response
+
+
+def check_for_available(serial):
+    """
+    Проверяем на наличие заказов для новых роботов
+    Для каждого заказа отправляем уведомление
+    """
+    queryset = Order.objects.filter(robot_serial=serial)
+    for i in queryset:
+        model_and_version = Robot.objects.filter(serial=i.robot_serial).first()
+        send_email_to_customer(i.customer.email, model_and_version.model, model_and_version.version)
+
+
+def send_email_to_customer(email, model, version):
+    """
+    Принимаем данные заказа и отправляем письмо
+    """
+    subject = 'Робот доступепен к покупке'
+    message = f'Добрый день!\nНедавно вы интересовались нашим роботом модели {model}, версии {version}.\nЭтот робот теперь в наличии. Если вам подходит этот вариант - пожалуйста, свяжитесь с нами'
+    send_mail(subject, message, 'example@gmail.com', [email])
